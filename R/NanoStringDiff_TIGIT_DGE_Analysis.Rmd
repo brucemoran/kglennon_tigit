@@ -1,0 +1,300 @@
+---
+title: "TIGIT DGE Analysis"
+author: "BM"
+date: "8/2/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999)
+csv <- ("../../EGAD00010001515/EGAD00010001515.RCC.csv")
+EGAD00010001515_RCC <- readr::read_csv(csv)
+load("../../EGAD00010001515/EGAD00010001515.RData")
+
+library(tidyverse)
+library(NanoStringDiff)
+library(limma)
+
+createNanoStringSetFromCsv_BM <- function (path, header = TRUE, designs) {
+    data = read.table(path, header = header, sep = ",")
+    if (is.null(data)) {
+        stop("There is no counts data")
+    }
+    selectcol = !(names(data) %in% c("CodeClass", "Name", "Accession"))
+    counts = data[, selectcol]
+    counts = as.matrix(counts)
+    id = which(is.na(rowSums(counts)))
+    if (length(id) > 0) {
+        data = data[-id, ]
+    }
+    code.class = tolower(data[, c("CodeClass")])
+    name = data[, c("Name")]
+    accession = data[, c("Accession")]
+    counts = data[, selectcol]
+    counts = as.matrix(counts)
+    colnames(counts) <- gsub("X", "", colnames(counts))
+    rownames(counts) = name
+    counts <- counts[,colnames(counts) %in% rownames(designs)]
+    designs <- designs[sort(rownames(designs)),]
+    designs <- as(designs, "AnnotatedDataFrame")
+    counts <- counts[,sort(colnames(counts))]
+    
+    rownames(designs) = colnames(counts)
+    pos.id = grep("positive", code.class, fixed = TRUE)
+    neg.id = grep("negative", code.class, fixed = TRUE)
+    house.id = grep("housekeeping", code.class, fixed = TRUE)
+    spikein.id = grep("spikein", code.class, fixed = TRUE)
+    positive = counts[pos.id, ]
+    negative = counts[neg.id, ]
+    housekeeping = counts[house.id, ]
+    spikein = counts[spikein.id, ]
+    endogenous = counts[-c(pos.id, neg.id, house.id, spikein.id), ]
+    cat(paste(" There are", ncol(counts), "samples imported; \n There are ", 
+        nrow(counts), "genes imported with:"))
+    print(table(code.class))
+    
+    res <- new("NanoStringSet", exprs = endogenous, phenoData = designs, 
+        positiveControl = positive, negativeControl = negative, 
+        housekeepingControl = housekeeping)
+    return(res)
+}
+```
+
+```{r TIGIT, include=FALSE}
+##find ensembl_gene_id for known gene names and parse from expr_tb
+TIGIT <- unlist(EGAD00010001515_raw_count_tb[EGAD00010001515_raw_count_tb$Name %in% "TIGIT",c(4)])
+names(TIGIT) <- c("TIGIT")
+expr_df <- EGAD00010001515_log2tpm_tb %>% dplyr::select(-external_gene_name) %>%
+  dplyr::filter(refseq_mrna %in% TIGIT) %>%
+  t() %>%
+  tibble::as_tibble(., rownames = "ns_sample_region_id")
+colnames(expr_df) <- expr_df[1,]
+expr_df <- expr_df[-1,]
+colnames(expr_df)[1] <- "sample_region_id"
+expr_df$sample_region_id <- gsub("NS_", "", expr_df$sample_region_id)
+
+expr_df[,2:dim(expr_df)[2]] <- lapply(expr_df[,2:dim(expr_df)[2]], as.numeric)
+
+  ########################
+ ## cutting expression ##
+########################
+  
+##function
+med_func <- function(df){
+  tibble::as_tibble(as.data.frame(lapply(seq_along(df), function(x){
+    vec <- df[[x]]
+    if(is.numeric(vec[1])){
+      medv <- median(vec)
+      ifelv <- ifelse(vec > medv, "High", "Low")
+      tbo <- tibble::tibble(ifelv, vec)
+      colnames(tbo) <- paste(names(df)[x], c("group", "log2tpm"), sep="_")
+      return(tbo)
+    } else {
+      tbo <- tibble::tibble(vec)
+      colnames(tbo) <- names(df)[x]
+      return(tbo)
+    }
+  })))
+}
+
+qua_func <- function(df){
+  tibble::as_tibble(as.data.frame(lapply(seq_along(df), function(x){
+    vec <- df[[x]]
+    ovec <- c()
+    if(is.numeric(vec[1])){
+      quav <- quantile(vec)
+      
+      #quav_cut <- cut(vec, breaks = quav, labels = seq(1, length(quav) - 1))
+      lvec <- unlist(lapply(vec, function(xx){
+        if(xx < quav[2]){return("Low")}
+        if(xx > quav[4]){return("High")}
+        else{return("Int")}
+      }))
+
+      tbo <- tibble::tibble(lvec, vec)
+      colnames(tbo) <- paste(names(df)[x], c("group", "log2tpm"), sep="_")
+      return(tbo)
+    } else {
+      tbo <- tibble::tibble(vec)
+      colnames(tbo) <- names(df)[x]
+      return(tbo)
+    }
+  })))
+}
+
+ter_func <- function(df){
+  tibble::as_tibble(as.data.frame(lapply(seq_along(df), function(x){
+    vec <- df[[x]]
+    ovec <- c()
+    if(is.numeric(vec[1])){
+      quav <- quantile(vec, c(0:3/3))
+      
+      #quav_cut <- cut(vec, breaks = quav, labels = seq(1, length(quav) - 1))
+      lvec <- unlist(lapply(vec, function(xx){
+        if(xx < quav[2]){return("Low")}
+        if(xx > quav[3]){return("High")}
+        else{return("Int")}
+      }))
+
+      tbo <- tibble::tibble(lvec, vec)
+      colnames(tbo) <- paste(names(df)[x], c("group", "log2tpm"), sep="_")
+      return(tbo)
+    } else {
+      tbo <- tibble::tibble(vec)
+      colnames(tbo) <- names(df)[x]
+      return(tbo)
+    }
+  })))
+}
+
+##rename colnames(expr_df)
+if(!is.null(names(TIGIT))){
+  colnames(expr_df)[colnames(expr_df) %in% TIGIT] <- paste(TIGIT, names(TIGIT), sep = "_")
+}
+
+median_tb <- med_func(expr_df)
+quantile_tb <- qua_func(expr_df)
+tertile_tb <- ter_func(expr_df)
+```
+## TIGIT DGE Analysis
+
+Data was obtained from the [EGAS00001002839](https://ega-archive.org/studies/EGAS00001002839) study and parsed as in R/parse_join_RData_EGAD00010001515.R
+
+Here a DGE analysis is conducted using Limma which can account for variation based on multiple samples 
+derived from the same individual/tumour.
+
+```{r NanoStringDiff}
+##because there are multiple regional samples per {patient_id} and per {ns_sample_id}, the colnames in metadata are different to dge
+##so we need to take all root names from {ns_sample_id}, and generate the {ns_sample_region_id} column in metadata
+sample_list <- lapply(sort(grep("_", colnames(EGAD00010001515_RCC), value = TRUE)), function(f){
+  paste(stringi::stri_split(f, regex = "_")[[1]][1:2], collapse = "_")
+})
+names(sample_list) <- sort(grep("_", colnames(EGAD00010001515_RCC), value = TRUE))
+sample_list_tb <- tibble::as_tibble(t(as.data.frame(sample_list)), rownames = "full")
+sample_list_tb$full <- gsub("X", "", sample_list_tb$full)
+colnames(sample_list_tb) <- c("sample_region_id", "sample_id")
+
+metadata_ov_tb <- dplyr::inner_join(sample_list_tb, metadata) %>%
+                  dplyr::filter(tissue %in% "Ovary") %>%
+                  dplyr::inner_join(., median_tb) %>%
+                  dplyr::mutate(group = NM_173799_TIGIT_group)
+
+metadata_ov_df <- as.data.frame(metadata_ov_tb)
+rownames(metadata_ov_df) <- metadata_ov_df$sample_region_id
+
+NanoStringDat <- createNanoStringSetFromCsv_BM(path = csv, header = TRUE, designs = metadata_ov_df)
+
+# ##parse tibble of raw_counts into NanoStringDiff-friendly format
+# 
+# raw_count_mat <- EGAD00010001515_raw_count_tb %>% dplyr::select(Accession_nv, tidyselect::starts_with("NS")) %>%
+#                  tibble::column_to_rownames("Accession_nv") %>%
+#                  as.matrix()
+# raw_count_end <- raw_count_mat[grep("ERC", rownames(raw_count_mat), invert = TRUE),]
+# 
+# ##define positive and negative housekeepers
+# raw_count_erc <- raw_count_mat[grep("ERC", rownames(raw_count_mat)),]
+# raw_count_pos <- raw_count_erc[rowSums(raw_count_erc) > 500,]
+# raw_count_neg <- raw_count_erc[rowSums(raw_count_erc) < 500,]
+# 
+# ##define housekeepers
+# ##https://www.nanostring.com/wp-content/uploads/2020/12/TN_Normalization_of_Expression_Data.pdf
+# hkgs <- c("NM_001090", "NM_001101", "NM_000688", "NM_004048", "NM_004859", "NM_000402", "NM_002046", "NM_000181", "NM_000194",
+#           "NM_005566", "NM_000291", "NM_019014", "NM_000937", "NM_000981", "NM_001002", "NM_004168", "NM_003194", "NM_178014")
+# 
+# ##take the sorted rowSums to get the highest, 'lowest' (medium), and 8th lowest expressed
+# raw_count_hkg <- sort(rowSums(raw_count_mat[rownames(raw_count_mat) %in% hkgs,]))
+# raw_count_end_low <- names(sort(apply(raw_count_end, 1, var)))[8]
+# raw_count_hkg_hml <- raw_count_mat[rownames(raw_count_mat) %in% c(names(raw_count_hkg[c(1, length(raw_count_hkg))]), raw_count_end_low),]
+# raw_count_end <- raw_count_end[!rownames(raw_count_end) %in% rownames(raw_count_hkg_hml), ]
+# 
+# 
+# 
+# 
+# ##create NanostringDat object
+# raw_count_end <- raw_count_end[, colnames(raw_count_end) %in% rownames(metadata_ov_df)]
+# raw_count_pos <- raw_count_pos[, colnames(raw_count_pos) %in% rownames(metadata_ov_df)]
+# raw_count_neg <- raw_count_neg[, colnames(raw_count_neg) %in% rownames(metadata_ov_df)]
+# raw_count_hkg_hml <- raw_count_hkg_hml[, colnames(raw_count_hkg_hml) %in% rownames(metadata_ov_df)]
+# 
+# NanoStringDat <- NanoStringDiff::createNanoStringSet(endogenous = raw_count_end,
+#                                                      positive = raw_count_pos,
+#                                                      negative = raw_count_neg,
+#                                                      housekeeping = raw_count_hkg_hml,
+#                                                      designs = metadata_ov_df)
+# 
+
+NanoStringDat <- NanoStringDiff::estNormalizationFactors(NanoStringDat)
+
+##design+glmLRT
+design.full <- model.matrix(~ 0 + group + sample_type + site, data = metadata_ov_df)
+result <- glm.LRT(NanoStringDat, design.full, Beta=c(1,2))
+result
+
+##NB that most patient data has same TIGTI grouping
+# metadata_ns %>% dplyr::select(patient_id, NM_173799_TIGIT_group) %>% as.data.frame() %>% table()
+# raw_count_dge <- raw_count_dge[, colnames(raw_count_dge) %in% metadata_ns$ns_sample_region_id] 
+# dge <- edgeR::DGEList(counts = raw_count_dge)
+# 
+# ##model includes site, sample_type (FFPE, FF) and patient_id
+# design <- model.matrix(~ 0 + NM_173799_TIGIT_group + sample_type + site, metadata_ns)
+# keep <- edgeR::filterByExpr(dge, design)
+# dge <- dge[keep, keep.lib.sizes=FALSE]
+# dge <- edgeR::calcNormFactors(dge)
+# 
+# ##MDS plots
+# col_patient_id <- metadata_ns$patient_id
+# levels(col_patient_id) <-  sample(rainbow(nlevels(col_patient_id)))
+# col_patient_id <- as.character(col_patient_id)
+# lcpm <- edgeR::cpm(dge, log = TRUE, prior.count = 0.5, group = "NM_173799_TIGIT_group")
+# med_high <- unlist(lapply(strsplit(as.vector(metadata_ns$NM_173799_TIGIT_group),""),function(f){f[1]}))
+# condNames <- paste0(rownames(metadata_ns), "_", med_high)
+# pdf("MDS.NM_173799_TIGIT_group.limma-voom.patient_id.pdf")
+#   plotMDS(lcpm, labels = condNames, col = col_patient_id)
+#   title(main="NM_173799_TIGIT_group")
+# dev.off()
+# 
+# ##voom
+# dcv <- voom(dge, design, plot=FALSE)
+# 
+# ##DC: https://support.bioconductor.org/p/94280/#94290; https://support.bioconductor.org/p/59700/
+# dccor <- limma::duplicateCorrelation(dcv, block = metadata_ns$patient_id)
+# dccor$consensus.correlation
+# dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns$patient_id)
+# 
+# ##second time around: https://support.bioconductor.org/p/115484/
+# dccor <- limma::duplicateCorrelation(dcdcv, block=metadata_ns$patient_id)
+# dccor$consensus.correlation
+# dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns$patient_id)
+# 
+# dcfit <- limma::lmFit(dcdcv, design, cor=dccor$consensus.correlation, block = metadata_ns$patient_id)
+# dcmc <- makeContrasts(
+#           LowHigh = NM_173799_TIGIT_groupLow - NM_173799_TIGIT_groupHigh,
+#           levels=colnames(design))
+# dcfitmc <- contrasts.fit(dcfit, dcmc)
+# dcfitmc <- eBayes(dcfitmc, robust=TRUE)
+# summary(decideTests(dcfitmc))
+# TIGIT_High_vs_Low_tb <- tibble::as_tibble(topTreat(dcfitmc, coef=1, n=Inf), rownames="Accession_nv") %>%
+#                         dplyr::left_join(raw_count_tb[,c(2,4)], .) %>%
+#                         dplyr::arrange(adj.P.Val, decreasing = FALSE)
+# 
+# 
+#                         dplyr::mutate(absFC = 2^logFC) %>%
+#                         dplyr::arrange(absFC, decreasing = FALSE) %>%
+#                         dplyr::mutate(fgseaRank = seq(1:length(t))) 
+# 
+# 
+# %>%
+#                         left_join(., gene2name) %>%
+#                         dplyr::select(ensembl_gene_id, external_gene_name, logFC, absFC, adj.P.Val, fgseaRank, t)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
