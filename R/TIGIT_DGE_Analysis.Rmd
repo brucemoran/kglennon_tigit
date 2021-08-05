@@ -6,16 +6,54 @@ output: github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-load("../EGAD00010001515/EGAD00010001515.RData")
+knitr::opts_chunk$set(echo = TRUE, fig.width=12, fig.height=12)
 library(tidyverse)
 library(limma)
-metadata <- EGAD00010001515_metadata %>% dplyr::filter(site %in% grep("ovary", EGAD00010001515_metadata$site, value = TRUE))
+library(NACHO)
+
+##load data created with parse_join_RData_EGAD00010001515.R
+load("../../EGAD00010001515/EGAD00010001515.RData")
+
+##use NACHO package to load RCC data
+data_dir <- "../../EGAD00010001515"
+ssheet_df <- data.frame(dirs = grep("md5",
+                                    grep("EGAF", dir(pattern = "*RCC", path = data_dir, recursive = TRUE), value = TRUE),
+                                    value = TRUE,
+                                    invert = TRUE))
+EGAD00010001515_RCC <- NACHO::load_rcc(data_directory = data_dir,
+                                       ssheet_csv = ssheet_df,
+                                       id_colname = "dirs",
+                                       normalisation_method = "GLM")
+
+expr_counts <- EGAD00010001515_RCC[["nacho"]] %>%
+  filter(grepl("Endogenous", CodeClass)) %>%
+  select(dirs, Name, Count_Norm) %>%
+  pivot_wider(names_from = "Name", values_from = "Count_Norm") %>%
+  column_to_rownames("dirs") %>%
+  t()
+
+EGAD00010001515_raw_count_end_tb <- EGAD00010001515_raw_count_tb %>% dplyr::filter(CodeClass %in% "Endogenous")
+
+##parse tibble of raw_counts into DGE-friendly format
+raw_count_dge <- EGAD00010001515_raw_count_end_tb %>% dplyr::select(Accession_nv, tidyselect::starts_with("NS")) %>%
+                 dplyr::filter(Accession_nv %in% grep("ERCC", EGAD00010001515_raw_count_tb$Accession_nv, invert = TRUE, value = TRUE)) %>%
+                                 tibble::column_to_rownames("Accession_nv") %>%
+                                 as.matrix()
+raw_count_tb <- EGAD00010001515_raw_count_end_tb
+
+##because there are multiple regional samples per {patient_id} and per {ns_sample_id}, the colnames in metadata are different to dge
+##so we need to take all root names from {ns_sample_id}, and generate the {ns_sample_region_id} column in metadata
+dge_sample_list <- lapply(sort(colnames(raw_count_dge)), function(f){
+  paste(stringi::stri_split(f, regex = "_")[[1]][1:3], collapse = "_")
+})
+names(dge_sample_list) <- sort(colnames(raw_count_dge))
+dge_ns_tb <- tibble::as_tibble(t(as.data.frame(dge_sample_list)), rownames = "full")
+colnames(dge_ns_tb) <- c("ns_sample_region_id", "ns_sample_id")
 ```
 
 ```{r TIGIT, include=FALSE}
 ##find ensembl_gene_id for known gene names and parse from expr_tb
-TIGIT <- unlist(EGAD00010001515_raw_count_tb[EGAD00010001515_raw_count_tb$Name %in% "TIGIT",c(4)])
+TIGIT <- unlist(EGAD00010001515_raw_count_end_tb[EGAD00010001515_raw_count_end_tb$Name %in% "TIGIT",c(4)])
 names(TIGIT) <- c("TIGIT")
 expr_df <- EGAD00010001515_log2tpm_tb %>% dplyr::select(-external_gene_name) %>%
   dplyr::filter(refseq_mrna %in% TIGIT) %>%
@@ -106,72 +144,75 @@ if(!is.null(names(TIGIT))){
 median_tb <- med_func(expr_df)
 quantile_tb <- qua_func(expr_df)
 tertile_tb <- ter_func(expr_df)
-```
-## TIGIT DGE Analysis
 
-Data was obtained from the [EGAS00001002839](https://ega-archive.org/studies/EGAS00001002839) study and parsed as in R/parse_join_RData_EGAD00010001515.R
+metadata_ns <- dplyr::inner_join(dge_ns_tb, EGAD00010001515_metadata) %>%
+               dplyr::inner_join(., median_tb)
+metadata_ov <- EGAD00010001515_metadata %>% dplyr::filter(tissue %in% "Ovary")
+metadata_ns_ov <- left_join(metadata_ov, metadata_ns)
+ov_cols <- c("CodeClass", "Name", "Accession", "Accession_nv", metadata_ns_ov$ns_sample_region_id)
+EGAD00010001515_raw_count_end_ov_tb <- EGAD00010001515_raw_count_end_tb[, colnames(EGAD00010001515_raw_count_end_tb) %in% ov_cols]
+
+##NB that most patient data has same TIGTI grouping
+raw_count_dge <- raw_count_dge[, colnames(raw_count_dge) %in% metadata_ns$ns_sample_region_id] 
+raw_count_ov_dge <- raw_count_dge[, colnames(raw_count_dge) %in% ov_cols]
+```
+## TIGIT Analysis
+
+Data was obtained from the [EGAS00001002839](https://ega-archive.org/studies/EGAS00001002839) study and parsed [here](https://github.com/brucemoran/kglennon_tigit/blob/master/R/parse_join_RData_EGAD00010001515.R)
 
 Here a DGE analysis is conducted using Limma which can account for variation based on multiple samples 
 derived from the same individual/tumour.
 
-```{r limma}
+### TIGIT Groupings by median log2tpm expression
+```{r table}
+mtd <- metadata_ns_ov %>% dplyr::select(patient_id, NM_173799_TIGIT_group) %>% as.data.frame() %>% table()
+knitr::kable(mtd)
+```
 
-##parse tibble of raw_counts into DGE-friendly format
-raw_count_dge <- EGAD00010001515_raw_count_tb %>% dplyr::select(Accession_nv, tidyselect::starts_with("NS")) %>%
-                 dplyr::filter(Accession_nv %in% grep("ERCC", EGAD00010001515_raw_count_tb$Accession_nv, invert = TRUE, value = TRUE)) %>%
-                                 tibble::column_to_rownames("Accession_nv") %>%
-                                 as.matrix()
-raw_count_tb <- dplyr::filter(.data = EGAD00010001515_raw_count_tb, Accession_nv %in% grep("ERCC", EGAD00010001515_raw_count_tb$Accession_nv, invert = TRUE, value = TRUE))
-
-##because there are multiple regional samples per {patient_id} and per {ns_sample_id}, the colnames in metadata are different to dge
-##so we need to take all root names from {ns_sample_id}, and generate the {ns_sample_region_id} column in metadata
-dge_sample_list <- lapply(sort(colnames(raw_count_dge)), function(f){
-  paste(stringi::stri_split(f, regex = "_")[[1]][1:3], collapse = "_")
-})
-names(dge_sample_list) <- sort(colnames(raw_count_dge))
-dge_ns_tb <- tibble::as_tibble(t(as.data.frame(dge_sample_list)), rownames = "full")
-colnames(dge_ns_tb) <- c("ns_sample_region_id", "ns_sample_id")
-
-metadata_ns <- dplyr::inner_join(dge_ns_tb, metadata, by  = "ns_sample_id") %>%
-               dplyr::inner_join(., tertile_tb)
-
-##NB that most patient data has same TIGTI grouping
-metadata_ns %>% dplyr::select(patient_id, NM_173799_TIGIT_group) %>% as.data.frame() %>% table()
-raw_count_dge <- raw_count_dge[, colnames(raw_count_dge) %in% metadata_ns$ns_sample_region_id] 
-dge <- edgeR::DGEList(counts = raw_count_dge)
+### DGE Analysis based on TIGIT median grouping
+```{r limma, results = 'asis'}
+dge <- edgeR::DGEList(counts = raw_count_ov_dge)
+norm_fac <- EGAD00010001515_raw_count_tb %>% 
+            dplyr::filter(!CodeClass %in% c("Endogenous", "Negative")) %>% 
+            dplyr::select(!!colnames(raw_count_ov_dge)) %>%
+            dplyr::summarise(across(where(is.numeric), sum)) %>% 
+            dplyr::mutate(across(where(is.numeric), ~ 1 /.x))
+dge$samples$norm.factors <- unlist(norm_fac)
 
 ##model includes site, sample_type (FFPE, FF) and patient_id
-design <- model.matrix(~ 0 + NM_173799_TIGIT_group + sample_type + site, metadata_ns)
-keep <- edgeR::filterByExpr(dge, design)
-dge <- dge[keep, keep.lib.sizes=FALSE]
-dge <- edgeR::calcNormFactors(dge)
+design <- model.matrix(~ 0 + NM_173799_TIGIT_group + sample_type, metadata_ns_ov)
+colnames(design) <- make.names(colnames(design))
+#keep <- edgeR::filterByExpr(dge, design)
+#dge <- dge[keep, keep.lib.sizes=FALSE]
+#dge <- edgeR::calcNormFactors(dge)
 
 ##MDS plots
-col_patient_id <- metadata_ns$patient_id
+col_patient_id <- metadata_ns_ov$patient_id
 levels(col_patient_id) <-  sample(rainbow(nlevels(col_patient_id)))
 col_patient_id <- as.character(col_patient_id)
 lcpm <- edgeR::cpm(dge, log = TRUE, prior.count = 0.5, group = "NM_173799_TIGIT_group")
-med_high <- unlist(lapply(strsplit(as.vector(metadata_ns$NM_173799_TIGIT_group),""),function(f){f[1]}))
-condNames <- paste0(rownames(metadata_ns), "_", med_high)
-pdf("MDS.NM_173799_TIGIT_group.limma-voom.patient_id.pdf")
-  plotMDS(lcpm, labels = condNames, col = col_patient_id)
-  title(main="NM_173799_TIGIT_group")
-dev.off()
+med_high <- unlist(lapply(strsplit(as.vector(metadata_ns_ov$NM_173799_TIGIT_group),""),function(f){f[1]}))
+condNames <- paste0(metadata_ns_ov$ns_sample_region_id, "_", med_high)
+plotMDS(lcpm, labels = condNames, col = col_patient_id, cex = 1)
+title(main="NM_173799_TIGIT_group, sample-region ID")
+condNames <- med_high
+plotMDS(lcpm, labels = condNames, col = col_patient_id, cex = 2)
+title(main="NM_173799_TIGIT_group, High-Low only")
 
 ##voom
 dcv <- voom(dge, design, plot=FALSE)
 
 ##DC: https://support.bioconductor.org/p/94280/#94290; https://support.bioconductor.org/p/59700/
-dccor <- limma::duplicateCorrelation(dcv, block = metadata_ns$patient_id)
+dccor <- limma::duplicateCorrelation(dcv, block = metadata_ns_ov$patient_id)
 dccor$consensus.correlation
-dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns$patient_id)
+dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns_ov$patient_id)
 
 ##second time around: https://support.bioconductor.org/p/115484/
-dccor <- limma::duplicateCorrelation(dcdcv, block=metadata_ns$patient_id)
+dccor <- limma::duplicateCorrelation(dcdcv, block=metadata_ns_ov$patient_id)
 dccor$consensus.correlation
-dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns$patient_id)
+dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns_ov$patient_id)
 
-dcfit <- limma::lmFit(dcdcv, design, cor=dccor$consensus.correlation, block = metadata_ns$patient_id)
+dcfit <- limma::lmFit(dcdcv, design, cor=dccor$consensus.correlation, block = metadata_ns_ov$patient_id)
 dcmc <- makeContrasts(
           LowHigh = NM_173799_TIGIT_groupLow - NM_173799_TIGIT_groupHigh,
           levels=colnames(design))
@@ -180,25 +221,8 @@ dcfitmc <- eBayes(dcfitmc, robust=TRUE)
 summary(decideTests(dcfitmc))
 TIGIT_High_vs_Low_tb <- tibble::as_tibble(topTreat(dcfitmc, coef=1, n=Inf), rownames="Accession_nv") %>%
                         dplyr::left_join(raw_count_tb[,c(2,4)], .) %>%
-                        dplyr::arrange(adj.P.Val, decreasing = FALSE)
-
-
+                        dplyr::arrange(adj.P.Val, decreasing = FALSE) %>%
                         dplyr::mutate(absFC = 2^logFC) %>%
-                        dplyr::arrange(absFC, decreasing = FALSE) %>%
                         dplyr::mutate(fgseaRank = seq(1:length(t))) 
-
-
-%>%
-                        left_join(., gene2name) %>%
-                        dplyr::select(ensembl_gene_id, external_gene_name, logFC, absFC, adj.P.Val, fgseaRank, t)
+knitr::kable(TIGIT_High_vs_Low_tb)
 ```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
