@@ -2,11 +2,11 @@
 title: "TIGIT DGE Analysis"
 author: "BM"
 date: "8/2/2021"
-output: github_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, fig.width=12, fig.height=12)
+knitr::opts_chunk$set(echo = TRUE, fig.width=10, fig.height=10)
 library(tidyverse)
 library(limma)
 library(NACHO)
