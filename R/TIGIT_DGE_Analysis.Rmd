@@ -2,7 +2,7 @@
 title: "TIGIT DGE Analysis"
 author: "BM"
 date: "8/2/2021"
-output: pdf_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -224,5 +224,53 @@ TIGIT_High_vs_Low_tb <- tibble::as_tibble(topTreat(dcfitmc, coef=1, n=Inf), rown
                         dplyr::arrange(adj.P.Val, decreasing = FALSE) %>%
                         dplyr::mutate(absFC = 2^logFC) %>%
                         dplyr::mutate(fgseaRank = seq(1:length(t))) 
+```
+
+### Sanity check logFC direction
+``` {r sanity, echo = FALSE }
+plotExps <- function(log2tpms, genes, mapgenes, conds, condcol, factors, tag){
+
+    log2tpms_genes <- log2tpms[match(genes,rownames(log2tpms)),]
+    if(dim(log2tpms_genes)[1]==0){
+        print("No input found, check genes are in rownames of log2tpm input")
+    }
+    else{
+        Factor <- rep(factors[1],dim(conds)[1])
+        Factor[c(conds[condcol] == factors[2])]<-factors[2]
+        
+        mltgg <- data.frame(0,0,0)
+        mltgg <- mltgg[-1,]
+        if(!is.null(mapgenes)){
+          genenames <- mapgenes %>% dplyr::filter(ensembl_gene_id %in% unlist(genes)) %>% dplyr::select(human_external_gene_name)
+          genenames <- unlist(genenames)
+        } else {
+          genenames <- genes
+        }
+        for(xx in 1:length(genes)){
+          mltgg <- rbind(mltgg, cbind(rep(genenames[xx], length(Factor)),
+                                      reshape2::melt(log2tpms_genes[rownames(log2tpms_genes) %in% unlist(genes)[xx],]),
+                                      Factor))
+        }
+        
+        colnames(mltgg) <- c("Gene","sample","value","Factor")
+        mltgg$Factor <- factor(mltgg$Factor,
+                               levels = factors, 
+                               ordered = TRUE)
+        ggp <- ggplot(data = mltgg, aes(x = Gene, y = value)) +
+               geom_boxplot(aes(colour = Factor)) +
+               geom_jitter(aes(colour = Factor), position=position_dodge(0.8)) +
+               labs(y = "log2TPM", title = paste0(tag, ": Expression per Group per Gene")) +
+               scale_colour_manual(values = c("blue", "red")) +
+               theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    }
+    return(ggp)
+}
+log2tpms <- EGAD00010001515_log2tpm_tb[EGAD00010001515_log2tpm_tb$external_gene_name %in% head(TIGIT_High_vs_Low_tb$Name) ,colnames(EGAD00010001515_log2tpm_tb) %in% c("external_gene_name", metadata_ns_ov$ns_sample_region_id)] %>%
+    as.data.frame() %>% column_to_rownames("external_gene_name")
+
+suppressMessages(plotExps(log2tpms = log2tpms, genes = unlist(head(TIGIT_High_vs_Low_tb$Name)), mapgenes = NULL, conds = metadata_ns_ov, condcol = "NM_173799_TIGIT_group", factors = c("High", "Low"), tag = "Median TIGTI High - Low log2TPM - EGAD00010001515"))
+```
+
+```{r outtab, results = 'asis'}
 knitr::kable(TIGIT_High_vs_Low_tb)
 ```

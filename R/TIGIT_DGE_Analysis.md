@@ -130,6 +130,10 @@ TIGIT_High_vs_Low_tb <- tibble::as_tibble(topTreat(dcfitmc, coef=1, n=Inf), rown
 
     ## Joining, by = "Accession_nv"
 
+### Sanity check logFC direction
+
+![](TIGIT_DGE_Analysis_files/figure-gfm/sanity-1.png)<!-- -->
+
 ``` r
 knitr::kable(TIGIT_High_vs_Low_tb)
 ```
