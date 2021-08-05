@@ -170,7 +170,7 @@ knitr::kable(mtd)
 ```
 
 ### DGE Analysis based on TIGIT median grouping
-```{r limma, results = 'asis'}
+```{r limma}
 dge <- edgeR::DGEList(counts = raw_count_ov_dge)
 norm_fac <- EGAD00010001515_raw_count_tb %>% 
             dplyr::filter(!CodeClass %in% c("Endogenous", "Negative")) %>% 
@@ -268,7 +268,7 @@ plotExps <- function(log2tpms, genes, mapgenes, conds, condcol, factors, tag){
 log2tpms <- EGAD00010001515_log2tpm_tb[EGAD00010001515_log2tpm_tb$external_gene_name %in% head(TIGIT_High_vs_Low_tb$Name) ,colnames(EGAD00010001515_log2tpm_tb) %in% c("external_gene_name", metadata_ns_ov$ns_sample_region_id)] %>%
     as.data.frame() %>% column_to_rownames("external_gene_name")
 
-suppressMessages(plotExps(log2tpms = log2tpms, genes = unlist(head(TIGIT_High_vs_Low_tb$Name)), mapgenes = NULL, conds = metadata_ns_ov, condcol = "NM_173799_TIGIT_group", factors = c("High", "Low"), tag = "Median TIGTI High - Low log2TPM - EGAD00010001515"))
+suppressMessages(plotExps(log2tpms = log2tpms, genes = unlist(head(TIGIT_High_vs_Low_tb$Name)), mapgenes = NULL, conds = metadata_ns_ov, condcol = "NM_173799_TIGIT_group", factors = c("High", "Low"), tag = "Median TIGGIT High - Low log2TPM - EGAD00010001515"))
 ```
 
 ```{r outtab, results = 'asis'}

@@ -92,7 +92,7 @@ dccor <- limma::duplicateCorrelation(dcv, block = metadata_ns_ov$patient_id)
 dccor$consensus.correlation
 ```
 
-\[1\] -0.01692907
+    ## [1] -0.01692907
 
 ``` r
 dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns_ov$patient_id)
@@ -102,7 +102,7 @@ dccor <- limma::duplicateCorrelation(dcdcv, block=metadata_ns_ov$patient_id)
 dccor$consensus.correlation
 ```
 
-\[1\] -0.01694087
+    ## [1] -0.01694087
 
 ``` r
 dcdcv <- limma::voom(dge, design, correlation=dccor$consensus.correlation, block = metadata_ns_ov$patient_id)
@@ -116,9 +116,10 @@ dcfitmc <- eBayes(dcfitmc, robust=TRUE)
 summary(decideTests(dcfitmc))
 ```
 
-       LowHigh
-
-Down 0 NotSig 760 Up 0
+    ##        LowHigh
+    ## Down         0
+    ## NotSig     760
+    ## Up           0
 
 ``` r
 TIGIT_High_vs_Low_tb <- tibble::as_tibble(topTreat(dcfitmc, coef=1, n=Inf), rownames="Accession_nv") %>%
